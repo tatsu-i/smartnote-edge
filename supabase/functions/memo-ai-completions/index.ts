@@ -4,54 +4,55 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { Hono } from 'jsr:@hono/hono';
+const app = new Hono();
 
-Deno.serve(async (req) => {
-  const { memo_type, user_memo, user_tags } = await req.json()
-  
-  const apiKey = Deno.env.get("GEMINI_API_KEY")
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent?key=${apiKey}`
+// APIキーの取得
+const apiKey = Deno.env.get("GEMINI_API_KEY")
+const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent?key=${apiKey}`
 
+const callGemini = async (memo_type: string, user_memo: string, user_tags: string[] | undefined) => {
   const body = {
     contents: [
       {
         parts: [
           {
             text: `
-あなたは、AIプログラミングメモ帳というwebアプリに組み込まれたAIです。このアプリでは、ユーザーが入力したメモやコードをもとに、AIがタイトル、解説、タグを生成します。
-
-#入力情報
-##メモの種類:
-${memo_type}
-## ユーザー入力内容:
-${user_memo}
-## ユーザー指定タグ (存在する場合):
-${JSON.stringify(user_tags)}
-
-# 指示
-1.  **タイトルの生成**:
-    *   ユーザー入力内容を最もよく表す簡潔なタイトルを1つ生成してください（メモの内容がパッとわかるタイトル）。
-    *   最大30文字程度でお願いします。
-
-2.  **解説の生成**:
-    *   メモの種類が「${memo_type}」であることを踏まえ、ユーザー入力内容について、その要点、目的、背景、または（コードの場合）機能や簡単な使用方法などを分かりやすく解説してください。
-    *   ${memo_type}が"code"の場合は、コードの言語を推測し、適切なマークダウン（コードブロックなど）を使用して解説してください。
-    *   300文字程度でお願いします。
-
-3.  **タグの生成**:
-    *   ユーザー入力内容と生成した解説に基づいて、関連性の高いキーワードタグを最大で5個提案してください。
-    *   ユーザー指定タグが存在する場合は、それらと重複せず、かつ関連性の高いタグを選んでください。
-    *   タグはJSON配列形式（例: ["タグ1", "タグ2", "タグ3"]）で出力してください。
-
-# 出力形式
-必ず以下のJSON形式で応答してください。
-\`\`\`json
-{
-  "title": "{生成されたタイトル}",
-  "explanation": "{生成された解説}",
-  "ai_tags": {生成されたタグのJSON配列}
-}
-\`\`\`
-`
+            あなたは、AIプログラミングメモ帳というwebアプリに組み込まれたAIです。このアプリでは、ユーザーが入力したメモやコードをもとに、AIがタイトル、解説、タグを生成します。
+            
+            #入力情報
+            ##メモの種類:
+            ${memo_type}
+            ## ユーザー入力内容:
+            ${user_memo}
+            ## ユーザー指定タグ (存在する場合):
+            ${JSON.stringify(user_tags)}
+  
+            # 指示
+            1.  **タイトルの生成**:
+              *   ユーザー入力内容を最もよく表す簡潔なタイトルを1つ生成してください（メモの内容がパッとわかるタイトル）。
+              *   最大30文字程度でお願いします。
+  
+            2.  **解説の生成**:
+              *   メモの種類が「${memo_type}」であることを踏まえ、ユーザー入力内容について、その要点、目的、背景、または（コードの場合）機能や簡単な使用方法などを分かりやすく解説してください。
+              *   ${memo_type}が"code"の場合は、コードの言語を推測し、適切なマークダウン（コードブロックなど）を使用して解説してください。
+              *   300文字程度でお願いします。
+  
+            3.  **タグの生成**:
+              *   ユーザー入力内容と生成した解説に基づいて、関連性の高いキーワードタグを最大で5個提案してください。
+              *   ユーザー指定タグが存在する場合は、それらと重複せず、かつ関連性の高いタグを選んでください。
+              *   タグはJSON配列形式（例: ["タグ1", "タグ2", "タグ3"]）で出力してください。
+  
+            # 出力形式
+            必ず以下のJSON形式で応答してください。
+            \`\`\`json
+            {
+            "title": "{生成されたタイトル}",
+            "explanation": "{生成された解説}",
+            "ai_tags": {生成されたタグのJSON配列}
+            }
+            \`\`\`
+            `
           }
         ]
       }
@@ -64,13 +65,28 @@ ${JSON.stringify(user_tags)}
     body: JSON.stringify(body)
   })
 
-  const data = await response.json()
+  return await response.json()
+}
 
-  return new Response(
-    JSON.stringify(data),
-    { headers: { "Content-Type": "application/json" } }
-  )
+app.post('/memo-ai-completions/normal', async(c) => {
+  try {
+    const body = await c.req.json();
+    const { memo_type, user_memo, user_tags } = body;
+    const data = await callGemini(memo_type, user_memo, user_tags);
+    return new Response(
+      JSON.stringify(data),
+      { headers: { "Content-Type": "application/json" } }
+    );
+  } catch (error) {
+    console.error("エラー発生:", error);
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
 })
+
+Deno.serve(app.fetch);
 
 /* To invoke locally:
 
